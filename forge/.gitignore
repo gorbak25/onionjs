@@ -1,0 +1,14 @@
+*.py[co]
+*.sw[nop]
+*~
+.bower.json
+.cdtproject
+.classpath
+.cproject
+.project
+.settings
+TAGS
+coverage
+dist
+node_modules
+npm-debug.log

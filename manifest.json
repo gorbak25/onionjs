@@ -1,0 +1,17 @@
+{
+  "manifest_version": 2,
+  "name": "Onion JS",
+  "version": "0.1",
+
+  "description": "Onions :D",
+
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "<all_urls>"],
+
+  "background": {
+    "scripts": ["jquery-3.2.1.min.js", "forge.all.js", "front.js"]
+  }
+
+}
