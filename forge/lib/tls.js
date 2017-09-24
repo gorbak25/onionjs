@@ -1,3 +1,12 @@
+//The original implementation supports only RSA key exchanges
+//I implemented support for DHE key exchanges which is needed by the tor spec :P
+//To be fully compliant to the tor spec we still need to implement the SSL_DHE_RSA_WITH_3DES_EDE_CBC_SHA cipher suite
+//To not stand out among the tor traffic TLS 1.2 needs to be implemented and we need to implement at least:
+//ENCRYPT_THEN_MAC extension
+//EXTENDED_MASTER_SECRET extension
+//Other extensions(ie. TLS_TICKET) which tor proxies advertise can be hardcoded into the client hello packet
+//as wireshark shows that tor relays do not use them frequently :P
+//Grzegorz Uriasz <gorbak25@gmail.com>
 /**
  * A Javascript implementation of Transport Layer Security (TLS).
  *

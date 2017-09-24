@@ -1,3 +1,10 @@
+/*
+I added the fixed cipher suite list from the tor spec
+DHE key exchanges were implemented
+SSL_DHE_RSA_WITH_3DES_EDE_CBC_SHA still needs to be implemented to be fully compliant to the spec
+Grzegorz Uriasz <gorbak25@gmail.com>
+*/
+
 /**
  * A Javascript implementation of AES Cipher Suites for TLS.
  *

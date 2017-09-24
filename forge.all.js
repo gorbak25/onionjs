@@ -18927,15 +18927,15 @@ pki.verifyCertificateChain = function(caStore, chain, verify) {
 
       if(error === null && (!parent || selfSigned) &&
         !caStore.hasCertificate(cert)) {
-        console.log(caStore);
+        //console.log(caStore);
         console.log("11111111")
-        console.log(caStore.hasCertificate(cert))
-        console.log(cert)
+        //console.log(caStore.hasCertificate(cert))
+        //console.log(cert)
         // no parent issuer and certificate itself is not trusted
-        /*error = {
+        error = {
           message: 'Certificate is not trusted.',
           error: pki.certificateError.unknown_ca
-        };*/
+        };
       }
     }
 

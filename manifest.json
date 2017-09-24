@@ -11,7 +11,7 @@
     "<all_urls>"],
 
   "background": {
-    "scripts": ["jquery-3.2.1.min.js", "forge.all.js", "front.js"]
+    "scripts": ["jquery-3.2.1.min.js", "forge.all.js", "meek_front.js", "tls_tor_connection.js", "tor_protocol.js", "main.js"]
   }
 
 }
