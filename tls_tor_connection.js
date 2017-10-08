@@ -203,7 +203,7 @@ TLS_TOR_Connection.prototype.on_tls_deciphered_data_process = function (bytes) {
     {
       if(this.input_buffer.length() >= 1)
       {
-        var command = this.input_buffer.getByte();
+        var command = Number(this.input_buffer.getByte());
         this.cell_buffer.putByte(command);
 
         //now we can determine whether we have a variable length cell or fixed length cell

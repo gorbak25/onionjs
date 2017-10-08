@@ -11,7 +11,19 @@
     "<all_urls>"],
 
   "background": {
-    "scripts": ["jquery-3.2.1.min.js", "forge.all.js", "meek_front.js", "tls_tor_connection.js", "tor_protocol.js", "main.js"]
+    "scripts": [
+      "jquery-3.2.1.min.js",
+      "forge.all.js",
+      "elliptic.js",
+      "tweetnacl-js/nacl.min.js",
+      "tweetnacl-util-js/nacl-util.js",
+      "tor_security_parameters.js",
+      "meek_front.js",
+      "tls_tor_connection.js",
+      "tor_knowledge_base.js",
+      "tor_protocol.js",
+      "tor_circuit.js",
+      "main.js"]
   }
 
 }
