@@ -47,30 +47,139 @@ function TOR_Onion_Layer(lower_processor)
     this.identity_fingerprint = undefined; //the identity fingerprint of the router
 
     //------ CRYPTOGRAPHIC KEYS --------
-    this.Df = undefined; //forward integrity check
-    this.Db = undefined; //backwards integrity check
+    this.Df = undefined; //forward integrity check seed
+    this.Db = undefined; //backwards integrity check seed
     this.Kf = undefined; //forward AES key
     this.Kb = undefined; //backwards AES key
     //----------------------------------
+
+    this.cipher = undefined;
+    this.decipher = undefined;
+    this.forward_md = undefined;
+    this.backward_md = undefined;
 }
 
-//sets a callback for the decrypted cell data
-TOR_Onion_Layer.prototype.set_on_pass_upstream_fun = function()
+TOR_Onion_Layer.prototype.prepare_crypto = function(crypto_keys)
 {
+    //save the keys for easy access
+    this.Db = crypto_keys.Db;
+    this.Df = crypto_keys.Df;
+    this.Kb = crypto_keys.Kb;
+    this.Kf = crypto_keys.Kf;
 
+    //prepare the ciphers
+    this.cipher = forge.cipher.createCipher('AES-CTR', this.Kf);
+    this.cipher.start({iv: '\x00'.repeat(10)});
+
+    this.decipher = forge.cipher.createDecipher('AES-CTR', this.Kb);
+    this.decipher.start({iv: '\x00'.repeat(10)});
+
+    //prepare and seed the intergrity check
+    this.forward_md = forge.md.sha1.create();
+    this.forward_md.update(this.Df);
+
+    this.backward_md = forge.md.sha1.create();
+    this.backward_md.update(this.Db);
 };
 
+//sets a callback for the decrypted cell data
+TOR_Onion_Layer.prototype.set_on_pass_upstream_fun = function(fun)
+{
+    this.on_pass_upstream = fun;
+};
+
+var TMP_TEST_DATA = forge.util.createBuffer();
+
+var c = 0;
+var cc = 0;
+var g = 0;
 //processes a relay cell
 TOR_Onion_Layer.prototype.process_cell = function (cell) {
+    var now = +new Date();
 
+    cell.decryptWithDecipher(this.decipher);
+    var disected = cell.disectData();
+    if(disected.recognized === 0)
+    {
+        var digest_obj = this.backward_md; //TODO: broken object cloning :P
+        if(disected.digest === cell.generateDigest(this.backward_md))
+        {
+            //console.log("Cell decryption successful");
+            if(disected.relay_cmd != 2)
+            {
+              console.log(disected);
+            }
+
+            TMP_TEST_DATA.putBytes(disected.payload_raw);
+            //console.log(TMP_TEST_DATA.length());
+            console.log(disected.payload_raw);
+            c+= 1;
+            cc+= 1;
+            g+= disected.payload_raw.length;
+            //console.log(c);
+            //console.log(cc);
+            console.log(g);
+            if(c > 50)
+            {
+              c-=50;
+              this.send_out_relay_command(new TOR_Relay_CMD_Relay_Sendme(), 120);
+            }
+
+            if(cc > 100)
+            {
+              cc-=100;
+              this.send_out_relay_command(new TOR_Relay_CMD_Relay_Sendme(), 0);
+            }
+
+
+
+
+            //console.log("DECRYPTION TOOK: ", +new Date() - now, "ms");
+
+            return;
+        }
+        else //recognision failed so we need to restore the digest state
+        {
+            this.backward_md = digest_obj;
+        }
+    }
+    console.log("Passing encrypted relay cell to further layers");
+    //cell recognition failed - pass the cell on
+    if(this.on_pass_upstream !== undefined)
+    {
+        this.on_pass_upstream(cell);
+    }
+    else
+    {
+        console.log("Relay cell decryption failed");
+    }
 };
 
 //sends out a tor relay cell to lower processing layers
-TOR_Onion_Layer.prototype.send_out_relay_cell = function(payload)
+TOR_Onion_Layer.prototype.send_out_relay_cell = function(cell)
 {
-    //TODO: NIY
-    //TODO: encryption of the data
-    this.lower_processor.send_out_tor_cell(encrypted);
+    cell.encryptWithCipher(this.cipher);
+    this.lower_processor.send_out_relay_cell(cell);
+};
+
+TOR_Onion_Layer.prototype.send_out_relay_command = function(command, stream_id)
+{
+    if(stream_id === undefined)
+    {
+        stream_id = 0;
+    }
+
+    var payload_generic = new TOR_Payload_Relay_Generic_Contents();
+    payload_generic.setRelayCommand(command);
+    payload_generic.stream_id = stream_id;
+
+    var cell = new TOR_Payload_Relay();
+    cell.cell_data = payload_generic.dumpBytes();
+
+    payload_generic.digest = cell.generateDigest(this.forward_md);
+    cell.cell_data = payload_generic.dumpBytes();
+
+    this.send_out_relay_cell(cell);
 };
 
 //a wrapper class which represents a tor circuit on top of an established tor protocol connection
@@ -112,6 +221,7 @@ TOR_Circuit.prototype.start = function()
 //creates a circuit without using public key cryptography - only applicable when we do not know the descriptor of the OR
 TOR_Circuit.prototype.start_circuit_fast = function(identity)
 {
+    console.log("Using create fast cells for circuit creation");
     return new Promise(
       function(resolve, reject){
           this.tor_connection.reject_handshake_promise = reject;
@@ -165,7 +275,7 @@ TOR_Circuit.prototype.start_circuit_NTOR = function(identity)
 
 TOR_Circuit.prototype.getLastHop = function()
 {
-    return this.circuit_hops[this.circuit_hops-1];
+    return this.circuit_hops[this.circuit_hops.length-1];
 };
 
 //after establishing cryptographic keys adds an onion layer to the circuit
@@ -176,27 +286,23 @@ TOR_Circuit.prototype.addHop = function(identity, crypto_keys)
         //create the wrapper
         var layer = new TOR_Onion_Layer(this);
         layer.identity_fingerprint = identity;
-        layer.Db = crypto_keys.Db;
-        layer.Df = crypto_keys.Df;
-        layer.Kb = crypto_keys.Kb;
-        layer.Kf = crypto_keys.Kf;
+        layer.prepare_crypto(crypto_keys);
 
         this.set_cell_handler(TOR_Payload_Relay, layer.process_cell.bind(layer));
 
         //now just save the wrapper for convenience
         this.circuit_hops[this.circuit_hops.length] = layer;
+        console.log("Circuit to ", identity, " was created");
     }
     else
     {
         var layer = new TOR_Onion_Layer(this.getLastHop());
         layer.identity_fingerprint = identity;
-        layer.Db = crypto_keys.Db;
-        layer.Df = crypto_keys.Df;
-        layer.Kb = crypto_keys.Kb;
-        layer.Kf = crypto_keys.Kf;
+        layer.prepare_crypto(crypto_keys);
 
         this.getLastHop().set_on_pass_upstream_fun(layer.process_cell.bind(layer));
         this.circuit_hops[this.circuit_hops.length] = layer;
+        console.log("Circuit", this.circuit_id, "was extended to", identity);
     }
 };
 
@@ -231,10 +337,12 @@ TOR_Circuit.prototype.send_out_relay_cell = function(cell)
         {
             this.early_relay_phase = false; //stop using relay early cells and switch to relay cells
         }
+        console.log("RELAY_EARLY");
         this.send_out_tor_cell(encapsulation);
     }
     else
     {
+        console.log("RELAY_ORDINARY")
         this.send_out_tor_cell(cell);
     }
 };

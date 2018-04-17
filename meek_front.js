@@ -6,7 +6,7 @@ Incoming data buffering will be handled by forge's tls engine
  */
 var PACKET_MAX_SIZE = 10000;
 var initial_fetch_delay = 100;
-var maximum_pooling_delay = 30000;
+var maximum_pooling_delay = 5000;
 var verbose_transmission = false;
 
 //a function to create a random token in browser extension mode
@@ -111,6 +111,7 @@ function MeekConnection(meek_server, front_domain, as_browser_extension, ping_th
     this.as_browser_extension = as_browser_extension;
 
     //in browser extension mode we are able to fully implement the meek plugable transport protocol
+
     if(as_browser_extension)
     {
         //random tokens
@@ -125,6 +126,7 @@ function MeekConnection(meek_server, front_domain, as_browser_extension, ping_th
                 }
             }
             if(!good) return;
+            console.log("TEST");
             var new_headers = [];
             for (var header of e.requestHeaders) {
                 if (header.name.toLowerCase() == "host") {
@@ -145,6 +147,7 @@ function MeekConnection(meek_server, front_domain, as_browser_extension, ping_th
                 }
             }
 
+            console.log(new_headers);
             return {requestHeaders: new_headers};
         }
 
@@ -172,7 +175,7 @@ function MeekConnection(meek_server, front_domain, as_browser_extension, ping_th
             else {
                 resolve();
             }
-        },(meek.as_browser_extension?1000:0)); //in extension mode 1s for header rewriting initialization
+        },(meek.as_browser_extension?2000:0)); //in extension mode 1s for header rewriting initialization
     });
 }
 
@@ -183,6 +186,7 @@ MeekConnection.prototype.ping_server = function(){
         var xhr = new XMLHttpRequest();
         xhr.onload = function() {
             msg = readResponseBody(xhr);
+            console.log(msg);
             if(msg === "I’m just a happy little web server.\n") {
                 resolve();
             }

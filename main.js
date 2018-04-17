@@ -8,10 +8,12 @@ to implement some things to be able to connect to an onion router -> for specifi
 Grzegorz Uriasz <gorbak25@gmail.com>
 */
 
-var meek_server = "d2zfqthxsdq309.cloudfront.net";
+//var meek_server = "d2zfqthxsdq309.cloudfront.net";
+var meek_server = "https://meek.azureedge.net";
 
-var as_browser_extension = true;
-var front_domain = "https://a0.awsstatic.com/"; //only used when as_browser_extension is true - otherwise we can not gain access to the HOST header
+var as_browser_extension = false;
+//var front_domain = "https://a0.awsstatic.com/"; //only used when as_browser_extension is true - otherwise we can not gain access to the HOST header
+var front_domain = "https://ajax.aspnetcdn.com/";
 
 console.log("ONION JS Started");
 /*
@@ -75,7 +77,7 @@ console.log(key.verify(msgHash, signature));
 */
 
 //prepare a meek connection
-meek = new MeekConnection(meek_server, front_domain, true, true);
+meek = new MeekConnection(meek_server, front_domain, as_browser_extension, true);
 
 meek.ready.then(()=>{
     //create a new meek data stream
@@ -91,8 +93,21 @@ meek.ready.then(()=>{
         tor.ready.then(()=>{
             var circuit = tor.create_new_circuit();
             circuit.ready.then(()=>{
-                console.log(circuit);
                 console.log("ONION IS READY :P");
+
+                //POC of opening a directory stream
+                var hop = circuit.getLastHop();
+
+                console.log("Sending a dir open cell using circuit", circuit.circuit_id);
+                hop.send_out_relay_command(new TOR_Relay_CMD_Relay_Begin_Dir(), 120);
+                setTimeout(()=>{
+                    var data_packet = new TOR_Relay_CMD_Relay_Data();
+                    data_packet.setPayload(
+                        "GET /tor/status-vote/current/consensus HTTP/1.0\r\nAccept-Encoding: gzip, deflate\r\n\r\n"
+                    );
+                    console.log(data_packet);
+                    hop.send_out_relay_command(data_packet, 120);
+                },1000);
             });
         });
     });

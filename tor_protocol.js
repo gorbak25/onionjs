@@ -14,7 +14,7 @@ Circuits will expose a DNS resolve interface
 
 function pad_payload_buffer(buffer)
 {
-    while(buffer.length() !== PAYLOAD_LEN)
+    while(buffer.length() < PAYLOAD_LEN)
     {
         buffer.putByte(0);
     }
@@ -67,8 +67,157 @@ function TOR_Payload_Created(){
 
 //---------------------------------------------------------------
 
+/*
+The relay commands are:
+         1 -- RELAY_BEGIN     [forward]
+         2 -- RELAY_DATA      [forward or backward]
+         3 -- RELAY_END       [forward or backward]
+         4 -- RELAY_CONNECTED [backward]
+         5 -- RELAY_SENDME    [forward or backward] [sometimes control]
+         6 -- RELAY_EXTEND    [forward]             [control]
+         7 -- RELAY_EXTENDED  [backward]            [control]
+         8 -- RELAY_TRUNCATE  [forward]             [control]
+         9 -- RELAY_TRUNCATED [backward]            [control]
+        10 -- RELAY_DROP      [forward or backward] [control]
+        11 -- RELAY_RESOLVE   [forward]
+        12 -- RELAY_RESOLVED  [backward]
+        13 -- RELAY_BEGIN_DIR [forward]
+        14 -- RELAY_EXTEND2   [forward]             [control]
+        15 -- RELAY_EXTENDED2 [backward]            [control]
+
+        32..40 -- Used for hidden services; see rend-spec.txt.
+
+ */
+
+function TOR_Relay_CMD_Relay_Begin(){
+
+}
+
+function TOR_Relay_CMD_Relay_Data(){
+    this.data = "";
+}
+
+TOR_Relay_CMD_Relay_Data.prototype.dumpBytes = function()
+{
+    return this.data;
+};
+
+TOR_Relay_CMD_Relay_Data.prototype.loadBytes = function(bytes)
+{
+    this.data = bytes;
+};
+
+TOR_Relay_CMD_Relay_Data.prototype.setPayload = function(bytes)
+{
+    this.data = bytes;
+};
+
+function TOR_Relay_CMD_Relay_End(){
+
+}
+
+function TOR_Relay_CMD_Relay_Connected(){
+
+}
+
+function TOR_Relay_CMD_Relay_Sendme(){
+
+}
+
+TOR_Relay_CMD_Relay_Sendme.prototype.dumpBytes = function(){
+    return "";
+};
+
+function TOR_Relay_CMD_Relay_Extend(){
+
+}
+
+function TOR_Relay_CMD_Relay_Extended(){
+
+}
+
+function TOR_Relay_CMD_Relay_Truncate(){
+
+}
+
+function TOR_Relay_CMD_Relay_Truncated(){
+
+}
+
+function TOR_Relay_CMD_Relay_Drop(){
+
+}
+
+function TOR_Relay_CMD_Relay_Resolve(){
+
+}
+
+function TOR_Relay_CMD_Relay_Resolved(){
+
+}
+
+function TOR_Relay_CMD_Relay_Begin_Dir(){
+
+}
+
+TOR_Relay_CMD_Relay_Begin_Dir.prototype.dumpBytes = function(){
+    return "";
+};
+
+function TOR_Relay_CMD_Relay_Extend2(){
+
+}
+
+function TOR_Relay_CMD_Relay_Extended2(){
+
+}
+
+var relay_cmd_processors = //defines the relay command decoders for a given command id
+    {
+        1: TOR_Relay_CMD_Relay_Begin,
+        2: TOR_Relay_CMD_Relay_Data,
+        3: TOR_Relay_CMD_Relay_End,
+        4: TOR_Relay_CMD_Relay_Connected,
+        5: TOR_Relay_CMD_Relay_Sendme,
+        6: TOR_Relay_CMD_Relay_Extend,
+        7: TOR_Relay_CMD_Relay_Extended,
+        8: TOR_Relay_CMD_Relay_Truncate,
+        9: TOR_Relay_CMD_Relay_Truncated,
+        10: TOR_Relay_CMD_Relay_Drop,
+        11: TOR_Relay_CMD_Relay_Resolve,
+        12: TOR_Relay_CMD_Relay_Resolved,
+        13: TOR_Relay_CMD_Relay_Begin_Dir,
+        14: TOR_Relay_CMD_Relay_Extend2,
+        15: TOR_Relay_CMD_Relay_Extended2
+    };
+
+//maps defined payload constructors to id numbers
+var relay_cmd_processor_to_id = {};
+for(var id in relay_cmd_processors)
+{
+    relay_cmd_processor_to_id[relay_cmd_processors[id]] = id;
+}
+
 //represents a parsed relay payload but it can be encrypted
 function TOR_Payload_Relay_Generic_Contents(bytes){
+    this.relay_cmd = 0;
+    this.recognized = 0;
+    this.stream_id = 0;
+    this.digest = '\x00'.repeat(4);
+    this.payload_raw_len = 0;
+    this.payload_raw = "";
+
+    this.payload = undefined; //a decoded payload object
+
+    if(bytes !== undefined)
+    {
+        this.loadBytes(bytes);
+    }
+}
+
+//dissects a relay cell payload - dissection of the contained data must be started AFTER the contents were confirmed to be valid
+TOR_Payload_Relay_Generic_Contents.prototype.loadBytes = function(bytes)
+{
     var buffer = forge.util.createBuffer(bytes);
     /*
         The payload of each unencrypted RELAY cell consists of:
@@ -79,14 +228,47 @@ function TOR_Payload_Relay_Generic_Contents(bytes){
             Length                  [2 bytes]
             Data                    [PAYLOAD_LEN-11 bytes]
     */
-
     this.relay_cmd = buffer.getByte();
     this.recognized = buffer.getInt16();
     this.stream_id = buffer.getInt16();
     this.digest = buffer.getBytes(4);
-    this.payload_len = buffer.getInt16();
-    this.data = buffer.getBytes();
-}
+    this.payload_raw_len = buffer.getInt16();
+    this.payload_raw = buffer.getBytes();
+};
+
+TOR_Payload_Relay_Generic_Contents.prototype.dumpBytes = function()
+{
+    var buffer = forge.util.createBuffer();
+    buffer.putByte(this.relay_cmd);
+    buffer.putInt16(this.recognized);
+    buffer.putInt16(this.stream_id);
+    buffer.putBytes(this.digest);
+
+    if(this.payload !== undefined)
+    {
+        this.payload_raw = this.payload.dumpBytes();
+        this.payload_raw_len = this.payload_raw.length;
+    }
+
+    buffer.putInt16(this.payload_raw_len);
+    buffer.putBytes(this.payload_raw);
+
+    pad_payload_buffer(buffer);
+    return buffer.getBytes();
+};
+
+//This function must be called only when we are sure that the contents are valid
+TOR_Payload_Relay_Generic_Contents.prototype.decodePayloadRaw = function()
+{
+    this.payload = new relay_cmd_processors[this.relay_cmd]();
+    this.payload.loadBytes(this.payload_raw_len, this.payload_raw);
+};
+
+TOR_Payload_Relay_Generic_Contents.prototype.setRelayCommand = function(command)
+{
+    this.payload = command;
+    this.relay_cmd = Number(relay_cmd_processor_to_id[command.constructor]);
+};
 
 //encapsulates relay data
 function TOR_Payload_Relay(){
@@ -108,50 +290,49 @@ TOR_Payload_Relay.prototype.dumpBytes = function()
     return buffer.getBytes();
 };
 
-TOR_Payload_Relay.prototype.encryptWithKey = function(key){
+TOR_Payload_Relay.prototype.encryptWithCipher = function(cipher){
     //ensure proper padding
     this.ensurePadding();
 
-    var cipher = forge.cipher.createCipher('AES-CTR', key);
-
-    cipher.start({iv: '\x00'.repeat(10)});
+    //pass cleartext to the cipher
     cipher.update(forge.util.createBuffer(this.cell_data));
-    cipher.finish();
+    //console.dir(cipher)
 
-    this.cell_data = cipher.output.getBytes();
+    //extract the ciphertext
+    var crypted_buff = forge.util.createBuffer();
+    crypted_buff.putBytes(cipher.output.getBytes());
+
+    //setup the payload
+    this.cell_data = crypted_buff.getBytes();
+
+    console.log("ENCRYPTED_LEN", this.cell_data.length);
 };
 
-TOR_Payload_Relay.prototype.decryptWithKey = function(key){
-    var decipher = forge.cipher.createDecipher('AES-CTR', key);
-
-    decipher.start({iv: '\x00'.repeat(10)});
+TOR_Payload_Relay.prototype.decryptWithDecipher = function(decipher){
     decipher.update(forge.util.createBuffer(this.cell_data));
-    decipher.finish();
 
     this.cell_data = decipher.output.getBytes();
 };
 
-TOR_Payload_Relay.prototype.generateDigest = function(key){
+TOR_Payload_Relay.prototype.generateDigest = function(message_digest_obj){
     this.ensurePadding();
 
     var buffer = forge.util.createBuffer(this.cell_data);
 
-    var md = forge.md.sha1.create();
-    md.update(key); //digest key
-    md.update(buffer.getBytes(1+2+2)); //CMD + Recognized + StreamID
+    message_digest_obj.update(buffer.getBytes(1+2+2)); //CMD + Recognized + StreamID
 
     buffer.getBytes(4); //ignore the digest
-    md.update('\x00'.repeat(4));
+    message_digest_obj.update('\x00'.repeat(4));
 
-    md.update(buffer.getBytes());
+    message_digest_obj.update(buffer.getBytes());
 
-    return md.digest();
+    return message_digest_obj.digest().getBytes(4);
 };
 
 TOR_Payload_Relay.prototype.ensurePadding = function()
 {
     //ensure proper padding
-    if(this.cell_data.length != PAYLOAD_LEN)
+    if(this.cell_data.length < PAYLOAD_LEN)
     {
         this.cell_data = this.dumpBytes();
     }
@@ -854,7 +1035,6 @@ TOR_Cell.prototype.loadBytes = function(cell_bytes){
 //dumps a tor cell together with appropriate padding
 TOR_Cell.prototype.dumpBytes = function(){
     var payload = this.payload.dumpBytes(); //payload processor will need to handle padding and length obtaining
-    console.log("c")
 
     var buffer = forge.util.createBuffer();
     buffer.putInt(this.circuit_id, this.circ_id_len*8);
@@ -1031,6 +1211,8 @@ TOR_Protocol.prototype.handle_error = function (ex) {
 
 //creates a new circuit on top of the connection
 TOR_Protocol.prototype.create_new_circuit = function() {
+
+    console.log("Creating new circuit");
 
     var random_bytes = "";
     if(this.tor_link_protocol_version <= 3)

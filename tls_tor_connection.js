@@ -7,7 +7,63 @@ It calls a callback on fully received TOR cells - it will fragment the incoming 
 Only fully crafted tor cells are expected to be send downstream from here - higher layers need to apply proper padding, ciphering and output buffering
 */
 
-var verbose_cells = true; //if true shows the received and transmitted cells
+var verbose_cells = false; //if true shows the received and transmitted cells
+
+////////////////  COPY PASTE CODE BEGIN  ////////////////////////
+//A Fast FIFO queue from https://github.com/creationix/fastqueue
+
+function Queue() {
+  this.head = [];
+  this.tail = [];
+  this.index = 0;
+  this.headLength = 0;
+  this.length = 0;
+}
+
+// Get an item from the front of the queue.
+Queue.prototype.shift = function () {
+  if (this.index >= this.headLength) {
+    // When the head is empty, swap it with the tail to get fresh items.
+    var t = this.head;
+    t.length = 0;
+    this.head = this.tail;
+    this.tail = t;
+    this.index = 0;
+    this.headLength = this.head.length;
+    if (!this.headLength) {
+      return;
+    }
+  }
+
+  // There was an item in the head, let's pull it out.
+  var value = this.head[this.index];
+  // And remove it from the head
+  if (this.index < 0) {
+    delete this.head[this.index++];
+  }
+  else {
+    this.head[this.index++] = undefined;
+  }
+  this.length--;
+  return value;
+};
+
+// Insert a new item at the front of the queue.
+Queue.prototype.unshift = function (item) {
+  this.head[--this.index] = item;
+  this.length++;
+  return this;
+};
+
+// Push a new item on the end of the queue.
+Queue.prototype.push = function (item) {
+  // Pushes always go to the write-only tail
+  this.length++;
+  this.tail.push(item);
+  return this;
+};
+
+////////////////  COPY PASTE CODE END  ////////////////////////
 
 //generates a random SNI
 function generateRandomSNI(){
@@ -82,6 +138,18 @@ function TLS_TOR_Connection(lower_processor){
     verify: ((con, ver, depth, certs)=>{return this.verify_tls_certificate(con, ver, depth, certs);}),
     tlsDataReady: function(connection) {lower_processor.send_downstream_fun.bind(lower_processor)(connection.tlsData.getBytes());},
   });
+
+  //contains whether the asynchronous cell formatter was initialized
+  this.processing_loop_initialized = false;
+
+  //contains the unprocessed cell queue --- necessary to do rate throtling
+  this.cell_queue = new Queue;
+
+  //a queue for cells to be send --- necessary to synchronize the asynchronous code
+  this.send_queue = new Queue;
+
+  //contains whether the cell sender was initialized
+  this.sending_loop_initialized = false;
 
   //setup downstream handler
   lower_processor.set_on_pass_upstream_fun(this.tls_connection.process.bind(this.tls_connection));
@@ -180,23 +248,43 @@ TLS_TOR_Connection.prototype.change_tor_link_version = function (version) {
   }
 };
 
-TLS_TOR_Connection.prototype.on_tls_deciphered_data_process = function (bytes) {
-  //buffer the data
-  this.input_buffer.putBytes(bytes);
-  //try to extract a full tor cell
+//sends out crafted cells to higher processing layers but no more than 80 cells per call
+TLS_TOR_Connection.prototype.pass_upstream_rate_throthler = function (){
+  if(this.cell_queue.length > 0)
+  {
+    var i=0;
+    while(i<80 && this.cell_queue.length > 0)
+    {
+      i+=1;
+      var cur = this.cell_queue.shift();
+      if(verbose_cells) {
+        console.log("RECEIVED CELL: ", btoa(cur));
+      }
+      this.on_data_ready(cur);
+    }
+  }
+};
+
+//extracts at most 4 cells from the input buffer and places them into the cell queue
+TLS_TOR_Connection.prototype.cell_disector_step = function(){
+  //try to extract at most 4 full tor cells
   /* Cell states:
   0 - no data in cell_buffer -> expected circ_id
   1 - received circuit ID -> length depends on the link version protocol(2 bytes at the beginning) - expected command
   2 - received command -> expected payload length
   3 - payload length received -> waiting for payload - if succeed flush data to higher layers and move to state 0
    */
-  while(this.input_buffer.length() > 0) {
+   var i = 0;
+  while(i<64 && this.input_buffer.length() > 0) {
     if (this.cell_state === 0) //obtain circuit id
     {
       if(this.input_buffer.length() >= this.CIRCID_LEN)
       {
         this.cell_buffer.putBytes(this.input_buffer.getBytes(this.CIRCID_LEN));
         this.cell_state = 1;
+      }
+      else{
+        break;
       }
     }
     if (this.cell_state === 1) // obtain command
@@ -221,6 +309,9 @@ TLS_TOR_Connection.prototype.on_tls_deciphered_data_process = function (bytes) {
           this.cell_expected_payload_len = this.PAYLOAD_LEN;
         }
       }
+      else{
+        break;
+      }
     }
     if (this.cell_state === 2) //obtain payload length
     {
@@ -229,6 +320,9 @@ TLS_TOR_Connection.prototype.on_tls_deciphered_data_process = function (bytes) {
         this.cell_expected_payload_len = this.input_buffer.getInt16();
         this.cell_buffer.putInt16(this.cell_expected_payload_len);
         this.cell_state = 3;
+      }
+      else{
+        break;
       }
     }
     if(this.cell_state === 3) //obtain payload
@@ -239,12 +333,32 @@ TLS_TOR_Connection.prototype.on_tls_deciphered_data_process = function (bytes) {
         this.input_buffer.compact();
         this.cell_state = 0;
         var crafted_cell = this.cell_buffer.getBytes();
-        if(verbose_cells) {
-          console.log("RECEIVED CELL: ", btoa(crafted_cell));
-        }
-        this.on_data_ready(crafted_cell);
+
+        this.cell_queue.push(crafted_cell);
+        i+=1;
+      }
+      else{
+        break;
       }
     }
+  }
+};
+
+TLS_TOR_Connection.prototype.on_tls_deciphered_data_process = function (bytes) {
+  //buffer the data
+  this.input_buffer.putBytes(bytes);
+
+  //if the processing loop was not started start it
+  if(this.processing_loop_initialized === false)
+  {
+    this.processing_loop_initialized=true;
+    setInterval(()=>{ //just to limit the data rate
+      this.pass_upstream_rate_throthler();
+      },50);
+
+    setInterval(()=>{ //just to limit the data rate
+      this.cell_disector_step();
+    },50);
   }
 };
 
@@ -268,7 +382,19 @@ TLS_TOR_Connection.prototype.send_downstream_fun = function (data){
   if(verbose_cells) {
   console.log("SENDING CELL: ", btoa(data));
   }
-  this.tls_connection.prepare(data);
+
+  this.send_queue.push(data);
+
+  if(this.sending_loop_initialized === false)
+  {
+    this.sending_loop_initialized = true;
+    setInterval(()=>{
+      if(this.send_queue.length > 0)
+      {
+        this.tls_connection.prepare(this.send_queue.shift());
+      }
+    },50);
+  }
 };
 
 TLS_TOR_Connection.prototype.set_on_pass_upstream_fun = function (callback) {
@@ -281,4 +407,3 @@ TLS_TOR_Connection.prototype.destroy = function () {
   this.cell_buffer.clear();
   this.lower_processor.destroy();
 };
-
